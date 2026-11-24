@@ -1,20 +1,28 @@
 # AGENTS.md
 
-Rules an AI agent (or a new contributor) follows in this repository — and in any `apx-<slug>` started from it.
+Rules an AI agent (or a new contributor) follows in this repository.
 
 ## What this is
 
-A template for an Action Platform plugin. The contract is `SPEC.md`; the skill in `skills/create-plugin/` walks through creating a plugin from here. Read `SPEC.md` before changing anything.
+`apx-github`, an Action Platform plugin: the `github` access provider for the core's service access, `github_*` read tools and `action-platform github` commands. The contract every plugin follows is `SPEC.md` in [apx-example](https://github.com/actionplatform/apx-example); read it before changing the shape of anything here.
+
+## Layout
+
+- `plugin.py`: the `Plugin`; `access(options)` reads only `options` and returns `None` without an `org`, an `AccessError` without a `token`.
+- `provider.py`: `GitHubProvider`, the `AccessProvider` over the REST API.
+- `checks.py`: `Org`, the read-only checks behind the tools and commands; `models.py` their answers.
+- `settings.py`: `AP_GITHUB_<KEY>`, then the plugin's options file, for the tools on a machine.
+- `tools.py`, `cli.py`: the same reads as MCP tools and CLI commands.
 
 ## Code
 
 - Python 3.11+, `ruff check . && ruff format --check .`, `pytest` green before a commit.
 - No comments inside function bodies; no test docstrings. Module docstrings say what the module is for.
-- `register` declares only — no I/O, threads or connections at import or in `register`.
-- Never monkey-patch `action_platform.*`; replace a slot or ask for a hook.
-- Long commands go through `action_platform.core.process.stream` so their output reaches the platform's job log.
+- `register` declares only — no I/O at import or in `register`.
+- Never monkey-patch `action_platform.*`.
+- Talk to GitHub through the core's `Http` only; tests drive `tests/fake.py`, which answers only what the real API answers, never the network.
+- A tool ships only after `tests/live/` has run it against a real organization.
 - `needs` lists every host and environment variable the plugin touches.
-- One ABC per responsibility (`abc.py`), a `Spec` per call, the target composing them through `parts()`; `tests/fake.py` built from the real service's answers, `tests/live/` against the real destination.
 
 ## Commits and branches
 
