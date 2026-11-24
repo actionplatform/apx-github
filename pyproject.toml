@@ -1,6 +1,6 @@
 [project]
 name = "apx-github"
-version = "0.1.0"
+version = "0.2.0"
 description = "Action Platform plugin for GitHub: organization access and read-only checks of branch protection and repository settings."
 readme = "README.md"
 license = "Apache-2.0"
