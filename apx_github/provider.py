@@ -17,7 +17,9 @@ from apx_github.client import API_URL, client
 ROLE_NAMES = {"read": "pull", "write": "push"}
 TEAM = "team:"
 SCOPES = ("admin:org", "repo")
+READ_SCOPES = (("read:org", "write:org", "admin:org"), ("repo",))
 PERMISSIONS = (("members", "write"), ("administration", "write"))
+LEVELS = {"read": 1, "write": 2, "admin": 3}
 LABELS = {
     "members": "Organization → Members",
     "administration": "Repository → Administration",
@@ -45,11 +47,11 @@ class GitHubProvider(AccessProvider):
         self.org = org
         self.http = http or client(token, url)
         self.app = app
-        self.checked = False
+        self.checked: set[bool] = set()
 
-    def check(self) -> None:
-        """Raise `AccessError` naming the scope or the GitHub App permission the token lacks, with where to grant it."""
-        if self.checked:
+    def check(self, write: bool = False) -> None:
+        """Raise `AccessError` naming the scope or the GitHub App permission the token lacks to read (or, with `write`, to change) access, with where to grant it."""
+        if write in self.checked:
             return
 
         res = self.http.send("GET", "user")
@@ -62,22 +64,23 @@ class GitHubProvider(AccessProvider):
         held = res.headers.get("x-oauth-scopes")
 
         if held is not None:
-            self._scopes(held)
+            self._scopes(held, write)
         elif self.app:
-            self._installation()
+            self._installation(write)
 
-        self.checked = True
+        self.checked.add(write)
 
-    def _scopes(self, held: str) -> None:
+    def _scopes(self, held: str, write: bool) -> None:
         granted = {s.strip() for s in held.split(",") if s.strip()}
-        missing = [s for s in SCOPES if s not in granted]
+        needed = [(s,) for s in SCOPES] if write else READ_SCOPES
+        missing = [any_of[0] for any_of in needed if not granted & set(any_of)]
 
         if missing:
             raise AccessError(
                 f"github: the token lacks the {', '.join(missing)} scope; reconnect GitHub under Settings → Git (connecting asks for it) or use a token that has it"
             )
 
-    def _installation(self) -> None:
+    def _installation(self, write: bool) -> None:
         listing = self.http.call("GET", "user/installations", query={"per_page": 100})
         found = next(
             (
@@ -94,10 +97,11 @@ class GitHubProvider(AccessProvider):
             )
 
         held = found.get("permissions") or {}
+        wanted = "write" if write else "read"
         missing = [
-            f'{LABELS[name]} "Read and write" (is {held.get(name, "none")})'
-            for name, level in PERMISSIONS
-            if held.get(name) != level and held.get(name) != "admin"
+            f'{LABELS[name]} "{"Read and write" if write else "Read"}" (is {held.get(name, "none")})'
+            for name, _ in PERMISSIONS
+            if LEVELS.get(held.get(name, ""), 0) < LEVELS[wanted]
         ]
 
         if missing:
@@ -171,7 +175,7 @@ class GitHubProvider(AccessProvider):
         return self.strongest(grants)
 
     def apply(self, op: Op) -> None:
-        self.check()
+        self.check(write=True)
         g, org = op.grant, self.org
         kind, _, target = g.resource.partition("/")
         removing = op.action == "remove"

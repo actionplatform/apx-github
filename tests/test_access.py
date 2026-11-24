@@ -268,15 +268,23 @@ class Mappings(unittest.TestCase):
 
 
 class TokenChecks(World):
-    def test_a_classic_token_without_admin_org_is_named(self):
+    def test_a_classic_token_without_admin_org_reads_but_cannot_change(self):
         self.github.scopes = "read:org, repo"
+
+        self.assertTrue(self.provider.read())
 
         with self.assertRaisesRegex(
             AccessError, "lacks the admin:org scope; reconnect GitHub"
         ):
-            self.provider.read()
+            self.provider.apply(Op("add", Grant("github", "cy", "org", "member")))
 
         self.assertEqual(self.github.writes(), [])
+
+    def test_a_token_without_read_org_cannot_read(self):
+        self.github.scopes = "repo"
+
+        with self.assertRaisesRegex(AccessError, "lacks the read:org scope"):
+            self.provider.read()
 
     def test_the_check_runs_once(self):
         self.provider.read()
@@ -300,8 +308,10 @@ class TokenChecks(World):
         self.github.app_owner = {"login": "acme", "type": "Organization"}
         provider = self.app_provider({"members": "read", "administration": "write"})
 
+        self.assertTrue(provider.read())
+
         with self.assertRaises(AccessError) as raised:
-            provider.read()
+            provider.apply(Op("add", Grant("github", "cy", "org", "member")))
 
         message = str(raised.exception)
         self.assertIn('Organization → Members "Read and write" (is read)', message)

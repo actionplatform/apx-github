@@ -91,5 +91,5 @@ class GitHubPlugin(Plugin):
             )
 
         return GitHubProvider(
-            str(org), found.token, found.api_url or url, app=found.app
+            str(org), found.token, found.api_url or API_URL, app=found.app
         )

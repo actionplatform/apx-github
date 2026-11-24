@@ -63,6 +63,14 @@ class AccessOptions(unittest.TestCase):
         self.assertEqual(provider.app, "ap-app")
         self.assertEqual(provider.http.base, "https://api.github.com")
 
+    def test_the_connection_never_goes_to_the_api_url_option(self):
+        found = Credential("github", "gho-x", "ana")
+        provider = GitHubPlugin().access(
+            Connected(found, org="acme", api_url="https://elsewhere.example/api/v3")
+        )
+
+        self.assertEqual(provider.http.base, "https://api.github.com")
+
     def test_the_token_option_wins_over_the_connection(self):
         found = Credential("github", "gho-x", "ana")
         provider = GitHubPlugin().access(Connected(found, org="acme", token="t"))
