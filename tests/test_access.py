@@ -188,6 +188,28 @@ class Changes(World):
         self.assertEqual(self.access.sync().changes, [])
 
 
+class Guard(unittest.TestCase):
+    def test_the_last_admin_is_refused_whatever_the_case(self):
+        provider = GitHubProvider("acme", "t", http=FakeGitHub())
+        op = Op("change", Grant("github", "Octocat", "org", "member"), "admin")
+        live = [
+            Grant("github", "octocat", "org", "admin"),
+            Grant("github", "hubot", "org", "member"),
+        ]
+
+        self.assertIn(op, provider.guard([op], live))
+
+    def test_another_admin_makes_a_demotion_safe(self):
+        provider = GitHubProvider("acme", "t", http=FakeGitHub())
+        op = Op("change", Grant("github", "Octocat", "org", "member"), "admin")
+        live = [
+            Grant("github", "octocat", "org", "admin"),
+            Grant("github", "hubot", "org", "admin"),
+        ]
+
+        self.assertEqual(provider.guard([op], live), {})
+
+
 class Reads(unittest.TestCase):
     def test_team_repositories_are_team_accounts(self):
         fake = FakeGitHub()

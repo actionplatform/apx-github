@@ -159,12 +159,16 @@ class GitHubProvider(AccessProvider):
         return grants | {Grant("github", a, "org", "member") for a in joining}
 
     def guard(self, ops: list[Op], live: list[Grant]) -> dict[Op, str]:
-        admins = {g.account for g in live if g.resource == "org" and g.level == "admin"}
+        admins = {
+            g.account.lower()
+            for g in live
+            if g.resource == "org" and g.level == "admin"
+        }
         losing = {
-            op.grant.account
+            op.grant.account.lower()
             for op in ops
             if op.grant.resource == "org"
-            and op.grant.account in admins
+            and op.grant.account.lower() in admins
             and (op.action == "remove" or op.grant.level != "admin")
         }
 
@@ -172,7 +176,7 @@ class GitHubProvider(AccessProvider):
             return {
                 op: f"github: {op.grant.account} is the last organization admin of {self.org}"
                 for op in ops
-                if op.grant.resource == "org" and op.grant.account in losing
+                if op.grant.resource == "org" and op.grant.account.lower() in losing
             }
 
         return {}
