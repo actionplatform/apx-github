@@ -9,6 +9,8 @@ action-platform github branch-protection
 action-platform github repo-settings
 ```
 
+The access capability runs where the core runs service access: on a hosted platform whose API image carries this plugin, with the options filled under **Plugins** for the organization. The tools and commands run on the machine that installed it.
+
 ## What it does
 
 ### Access
