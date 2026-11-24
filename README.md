@@ -9,6 +9,15 @@ action-platform github branch-protection
 action-platform github repo-settings
 ```
 
+
+Until `apx-github` is on PyPI and in the plugin index, install it from its release tag into the CLI's environment (`action-platform plugin install github` works once it is):
+
+```bash
+pip install "apx-github @ git+https://github.com/actionplatform/apx-github@v0.1.0"
+```
+
+The access capability runs where the core runs service access: on a hosted platform whose API image carries this plugin, with the options filled under **Plugins** for the organization. The tools and commands run on the machine that installed it.
+
 ## What it does
 
 ### Access
