@@ -1,65 +1,161 @@
-"""Drive the plugin through the core's registry without installing it."""
-
 import asyncio
-import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
-from action_platform.core.flow import gitflow
-from action_platform.core.scaffold.catalog import Matrix, with_plugin_clouds
-from action_platform.core.wiring import wired
+from action_platform.core.service_access import AccessError
 from action_platform.plugins import Loaded, Plugins, PluginState, registry
+from action_platform.plugins.options import FileOptions
 
-from apx_example import ExamplePlugin
-from apx_example.release import Calver, Plain
+from apx_github import GitHubPlugin
+from apx_github.provider import GitHubProvider
+from apx_github.settings import connect, setting
+
+TOOLS = {"github_branch_protection", "github_repo_settings"}
 
 
-class ExamplePluginTest(unittest.TestCase):
+class Opts(dict):
+    def get(self, key, default=None):
+        return super().get(key, default)
+
+
+class AccessOptions(unittest.TestCase):
+    def test_no_org_means_no_access(self):
+        self.assertIsNone(GitHubPlugin().access(Opts()))
+        self.assertIsNone(GitHubPlugin().access(Opts(token="t")))
+
+    def test_a_missing_token_is_named(self):
+        with self.assertRaisesRegex(AccessError, "token"):
+            GitHubPlugin().access(Opts(org="acme"))
+
+    def test_the_provider_comes_from_the_options(self):
+        provider = GitHubPlugin().access(
+            Opts(org="acme", token="t", api_url="https://ghe.example.com/api/v3")
+        )
+
+        self.assertIsInstance(provider, GitHubProvider)
+        self.assertEqual(provider.org, "acme")
+        self.assertEqual(provider.http.base, "https://ghe.example.com/api/v3")
+
+    def test_the_default_api_is_github_com(self):
+        provider = GitHubPlugin().access(Opts(org="acme", token="t"))
+
+        self.assertEqual(provider.http.base, "https://api.github.com")
+
+    def test_the_environment_is_not_read(self):
+        env = {"AP_GITHUB_ORG": "acme", "AP_GITHUB_TOKEN": "t"}
+
+        with mock.patch.dict(os.environ, env):
+            self.assertIsNone(GitHubPlugin().access(Opts()))
+
+
+class Settings(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patch = mock.patch.dict(os.environ, {"AP_HOME": self.tmp.name})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+        for key in ("AP_GITHUB_ORG", "AP_GITHUB_TOKEN", "AP_GITHUB_API_URL"):
+            os.environ.pop(key, None)
+
+    def test_environment_first_then_options(self):
+        options = FileOptions("github")
+        options.set("org", "stored")
+
+        self.assertEqual(setting("org"), "stored")
+
+        with mock.patch.dict(os.environ, {"AP_GITHUB_ORG": "env"}):
+            self.assertEqual(setting("org"), "env")
+
+    def test_a_missing_setting_is_named(self):
+        with mock.patch.dict(os.environ, {"AP_GITHUB_ORG": "acme"}):
+            with self.assertRaisesRegex(AccessError, "AP_GITHUB_TOKEN") as raised:
+                connect()
+
+        self.assertNotIn("AP_GITHUB_ORG,", str(raised.exception))
+
+    def test_connect_builds_the_client(self):
+        env = {"AP_GITHUB_ORG": "acme", "AP_GITHUB_TOKEN": "t"}
+
+        with mock.patch.dict(os.environ, env):
+            org = connect()
+
+        self.assertEqual(org.org, "acme")
+        self.assertEqual(org.http.base, "https://api.github.com")
+
+
+class Surface(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.plugins = Plugins(
-            [Loaded(ExamplePlugin(), "apx-example-example", "0.1.0")],
+            [Loaded(GitHubPlugin(), "apx-github", "0.1.0")],
             PluginState(file=Path(self.tmp.name) / "plugins.json"),
         )
         registry._current = self.plugins
         self.addCleanup(registry.reset)
-        self.addCleanup(wired.restore, "gitflow_rules")
-        self.addCleanup(self.tmp.cleanup)
 
-    def test_tool_is_prefixed_and_answers(self):
+    def tools(self):
         from action_platform.mcp import server
 
         mcp = server.build()
-        names = {t.name for t in asyncio.run(mcp.list_tools())}
 
-        self.assertIn("example_hello", names)
+        return mcp, {t.name: t for t in asyncio.run(mcp.list_tools())}
 
-        result = asyncio.run(mcp.call_tool("example_hello", {"name": "you"}))
+    def test_the_tools_are_registered_read_only_with_schemas(self):
+        _, tools = self.tools()
 
-        self.assertEqual(json.loads(result.content[0].text)["greeting"], "hello you")
+        self.assertTrue(TOOLS <= set(tools))
 
-    def test_rules_are_replaced_while_enabled(self):
-        self.plugins.register()
+        for name in TOOLS:
+            self.assertTrue(tools[name].output_schema, name)
+            self.assertTrue(tools[name].annotations.read_only_hint, name)
 
-        self.assertIsNotNone(gitflow.check_branch("chore/1"))
+    def test_a_disabled_plugin_refuses(self):
+        mcp, _ = self.tools()
+        self.plugins.disable("github")
 
-        self.plugins.disable("example")
+        with self.assertRaisesRegex(Exception, "plugin github is disabled"):
+            asyncio.run(mcp.call_tool("github_repo_settings", {}))
 
-        self.assertIsNone(gitflow.check_branch("chore/1"))
+    def test_options_declare_the_token_as_a_secret(self):
+        kinds = {o.key: o.kind for o in GitHubPlugin.options}
 
-    def test_overlay_joins_the_matrix(self):
-        merged = with_plugin_clouds(Matrix.from_dict({"clouds": []}))
+        self.assertEqual(kinds, {"org": "text", "token": "secret", "api_url": "url"})
 
-        self.assertEqual([c.name for c in merged.clouds], ["example"])
-        self.assertEqual(merged.cloud("example").source, "example")
+    def test_the_plugin_declares_what_it_reaches(self):
+        plugin = GitHubPlugin()
 
-    def test_an_option_can_carry_a_setup_button(self):
-        greeting = next(o for o in ExamplePlugin.options if o.key == "greeting")
+        self.assertEqual(
+            (plugin.slug, plugin.name, plugin.min_core), ("github", "GitHub", "0.33")
+        )
+        self.assertTrue(any("api.github.com" in n for n in plugin.needs))
+        self.assertTrue(any("AP_GITHUB_TOKEN" in n for n in plugin.needs))
 
-        self.assertEqual(greeting.as_dict()["action_label"], "Open the docs")
-        self.assertIn("{organization}", greeting.action_url)
 
-    def test_release_providers(self):
-        self.assertTrue(Calver().next("1.0.0", "patch", False, []).count(".") == 2)
-        self.assertIn("- feat: x", Plain().render("1.0.0", ["feat: x"]))
+class Cli(unittest.TestCase):
+    def test_commands_print_the_models_as_json(self):
+        import json
+
+        from typer.testing import CliRunner
+
+        from apx_github import cli
+        from apx_github.checks import Org
+        from tests.fake import FakeGitHub
+
+        github = FakeGitHub()
+        github.repo("api")
+
+        with mock.patch.object(cli, "connect", return_value=Org(github, "acme")):
+            runner = CliRunner()
+            protection = runner.invoke(cli.app, ["branch-protection", "--repo", "api"])
+            settings = runner.invoke(cli.app, ["repo-settings"])
+
+        self.assertEqual(json.loads(protection.output)["repos"][0]["repo"], "api")
+        self.assertEqual(
+            json.loads(settings.output)["repos"][0]["visibility"], "public"
+        )
