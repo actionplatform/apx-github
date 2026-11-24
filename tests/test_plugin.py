@@ -1,8 +1,11 @@
 import asyncio
+import importlib
 import os
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Optional
 from unittest import mock
 
 from action_platform.core.service_access import AccessError
@@ -21,14 +24,59 @@ class Opts(dict):
         return super().get(key, default)
 
 
+class Connected(Opts):
+    def __init__(self, found, **values):
+        super().__init__(**values)
+        self.found = found
+
+    def credential(self, kind):
+        return self.found if kind == "github" else None
+
+
+@dataclass(frozen=True)
+class Credential:
+    kind: str
+    token: str
+    login: str = ""
+    api_url: Optional[str] = None
+    scopes: Optional[tuple] = None
+    app: Optional[str] = None
+
+
+HAS_CONNECTIONS = hasattr(importlib.import_module("action_platform.abc"), "Connection")
+
+
 class AccessOptions(unittest.TestCase):
     def test_no_org_means_no_access(self):
         self.assertIsNone(GitHubPlugin().access(Opts()))
         self.assertIsNone(GitHubPlugin().access(Opts(token="t")))
 
-    def test_a_missing_token_is_named(self):
-        with self.assertRaisesRegex(AccessError, "token"):
+    def test_without_token_nor_connection_it_says_to_connect(self):
+        with self.assertRaisesRegex(AccessError, "connect GitHub under Settings → Git"):
             GitHubPlugin().access(Opts(org="acme"))
+
+    def test_the_connection_is_used_when_the_token_option_is_empty(self):
+        found = Credential("github", "gho-x", "ana", None, None, "ap-app")
+        provider = GitHubPlugin().access(Connected(found, org="acme"))
+
+        self.assertEqual(provider.http.headers["authorization"], "Bearer gho-x")
+        self.assertEqual(provider.app, "ap-app")
+        self.assertEqual(provider.http.base, "https://api.github.com")
+
+    def test_the_token_option_wins_over_the_connection(self):
+        found = Credential("github", "gho-x", "ana")
+        provider = GitHubPlugin().access(Connected(found, org="acme", token="t"))
+
+        self.assertEqual(provider.http.headers["authorization"], "Bearer t")
+        self.assertIsNone(provider.app)
+
+    @unittest.skipUnless(HAS_CONNECTIONS, "core without connections")
+    def test_it_declares_the_github_connection(self):
+        (declared,) = GitHubPlugin.connections
+
+        self.assertEqual(declared.kind, "github")
+        self.assertEqual(declared.scopes, ("admin:org", "repo"))
+        self.assertIn(("members", "write"), declared.permissions)
 
     def test_the_provider_comes_from_the_options(self):
         provider = GitHubPlugin().access(
