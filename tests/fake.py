@@ -58,6 +58,9 @@ class FakeGitHub(FakeHttp):
         self.rules: dict[str, list] = {}
         self.alerts: dict[str, bool] = {}
         self.denied: set[str] = set()
+        self.scopes: Optional[str] = "admin:org, repo"
+        self.installations: list[dict] = []
+        self.app_owner: dict = {"login": "ana", "type": "User"}
 
     def repo(self, name: str, **fields: Any) -> dict:
         self.repos.setdefault(name, {})
@@ -83,6 +86,22 @@ class FakeGitHub(FakeHttp):
         p = route.split("/")
         perm_names = {"pull": "read", "push": "write"}
         url = self.url(route)
+
+        if route == "user":
+            headers = {} if self.scopes is None else {"x-oauth-scopes": self.scopes}
+            return Response(200, {"login": "ana"}, headers)
+
+        if route == "user/installations":
+            return Response(
+                200,
+                {
+                    "total_count": len(self.installations),
+                    "installations": self.installations,
+                },
+            )
+
+        if p[0] == "apps":
+            return Response(200, {"slug": p[1], "owner": self.app_owner})
 
         if p[:3] == ["orgs", "acme", "members"] and method == "GET":
             return _paged(

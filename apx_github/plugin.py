@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Optional
 
 from action_platform.abc import Option, Plugin, Surface
+
+try:
+    from action_platform.abc import Connection
+except ImportError:
+    Connection = None
 from action_platform.core.service_access import AccessError, AccessProvider
 from action_platform.plugins.options import Options
 
 from apx_github import cli
 from apx_github.client import API_URL
-from apx_github.provider import GitHubProvider
+from apx_github.provider import PERMISSIONS, SCOPES, GitHubProvider
 from apx_github.tools import register_tools
 
 
@@ -22,7 +27,20 @@ class GitHubPlugin(Plugin):
     needs = [
         "net: api.github.com (or the api_url option on GitHub Enterprise Server)",
         "env: AP_GITHUB_ORG, AP_GITHUB_TOKEN, AP_GITHUB_API_URL (or the same keys in the plugin's options)",
+        "connection: the organization's GitHub connection on a hosted platform (core 0.34)",
     ]
+    connections = (
+        [
+            Connection(
+                "github",
+                SCOPES,
+                PERMISSIONS,
+                "manage members, teams and repository permissions of the organization",
+            )
+        ]
+        if Connection
+        else []
+    )
     options = [
         Option(
             "org",
@@ -34,7 +52,7 @@ class GitHubPlugin(Plugin):
             "token",
             "Token",
             "secret",
-            help="Classic token from an organization owner: admin:org and repo to change access, read:org and repo to read.",
+            help="Optional. Leave empty on a platform whose GitHub connection (Settings → Git) belongs to an organization owner. Otherwise a classic token from an owner: admin:org and repo.",
         ),
         Option(
             "api_url",
@@ -59,10 +77,19 @@ class GitHubPlugin(Plugin):
             return None
 
         token = options.get("token")
+        url = str(options.get("api_url") or API_URL)
 
-        if not token:
-            raise AccessError("github: set the token option to manage the organization")
+        if token:
+            return GitHubProvider(str(org), str(token), url)
+
+        credential = getattr(options, "credential", None)
+        found = credential("github") if credential else None
+
+        if found is None:
+            raise AccessError(
+                "github: connect GitHub under Settings → Git with an owner of the organization (or set the token option)"
+            )
 
         return GitHubProvider(
-            str(org), str(token), str(options.get("api_url") or API_URL)
+            str(org), found.token, found.api_url or API_URL, app=found.app
         )

@@ -16,6 +16,14 @@ from apx_github.client import API_URL, client
 
 ROLE_NAMES = {"read": "pull", "write": "push"}
 TEAM = "team:"
+SCOPES = ("admin:org", "repo")
+READ_SCOPES = (("read:org", "write:org", "admin:org"), ("repo",))
+PERMISSIONS = (("members", "write"), ("administration", "write"))
+LEVELS = {"read": 1, "write": 2, "admin": 3}
+LABELS = {
+    "members": "Organization → Members",
+    "administration": "Repository → Administration",
+}
 
 
 class GitHubProvider(AccessProvider):
@@ -34,11 +42,84 @@ class GitHubProvider(AccessProvider):
         token: str,
         url: str = API_URL,
         http: Optional[Http] = None,
+        app: Optional[str] = None,
     ) -> None:
         self.org = org
         self.http = http or client(token, url)
+        self.app = app
+        self.checked: set[bool] = set()
+
+    def check(self, write: bool = False) -> None:
+        """Raise `AccessError` naming the scope or the GitHub App permission the token lacks to read (or, with `write`, to change) access, with where to grant it."""
+        if write in self.checked:
+            return
+
+        res = self.http.send("GET", "user")
+
+        if res.status >= 400:
+            raise AccessError(
+                f"github: the token was refused ({res.status}); reconnect GitHub under Settings → Git"
+            )
+
+        held = res.headers.get("x-oauth-scopes")
+
+        if held is not None:
+            self._scopes(held, write)
+        elif self.app:
+            self._installation(write)
+
+        self.checked.add(write)
+
+    def _scopes(self, held: str, write: bool) -> None:
+        granted = {s.strip() for s in held.split(",") if s.strip()}
+        needed = [(s,) for s in SCOPES] if write else READ_SCOPES
+        missing = [any_of[0] for any_of in needed if not granted & set(any_of)]
+
+        if missing:
+            raise AccessError(
+                f"github: the token lacks the {', '.join(missing)} scope; reconnect GitHub under Settings → Git (connecting asks for it) or use a token that has it"
+            )
+
+    def _installation(self, write: bool) -> None:
+        listing = self.http.call("GET", "user/installations", query={"per_page": 100})
+        found = next(
+            (
+                i
+                for i in (listing or {}).get("installations", [])
+                if (i.get("account") or {}).get("login", "").lower() == self.org.lower()
+            ),
+            None,
+        )
+
+        if found is None:
+            raise AccessError(
+                f"github: the GitHub App {self.app} is not installed on {self.org}; install it: https://github.com/apps/{self.app}/installations/new"
+            )
+
+        held = found.get("permissions") or {}
+        wanted = "write" if write else "read"
+        missing = [
+            f'{LABELS[name]} "{"Read and write" if write else "Read"}" (is {held.get(name, "none")})'
+            for name, _ in PERMISSIONS
+            if LEVELS.get(held.get(name, ""), 0) < LEVELS[wanted]
+        ]
+
+        if missing:
+            raise AccessError(
+                f"github: the GitHub App {self.app} lacks {'; '.join(missing)}. Add it in the app's settings ({self._app_settings()}), then accept the new permissions on the installation: https://github.com/organizations/{self.org}/settings/installations/{found.get('id')}"
+            )
+
+    def _app_settings(self) -> str:
+        res = self.http.send("GET", f"apps/{self.app}")
+        owner = (res.data or {}).get("owner") or {} if res.status < 400 else {}
+
+        if owner.get("type") == "Organization":
+            return f"https://github.com/organizations/{owner['login']}/settings/apps/{self.app}/permissions"
+
+        return f"https://github.com/settings/apps/{self.app}/permissions"
 
     def read(self) -> list[Grant]:
+        self.check()
         grants: list[Grant] = []
         org = self.org
 
@@ -94,6 +175,7 @@ class GitHubProvider(AccessProvider):
         return self.strongest(grants)
 
     def apply(self, op: Op) -> None:
+        self.check(write=True)
         g, org = op.grant, self.org
         kind, _, target = g.resource.partition("/")
         removing = op.action == "remove"

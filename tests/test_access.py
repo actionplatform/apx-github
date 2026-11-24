@@ -265,3 +265,80 @@ class Mappings(unittest.TestCase):
         m = Mapping(people={"a@x": {"github": "a"}}, imported={"github": "t"})
 
         self.assertEqual(Mapping.of(m.as_dict()), m)
+
+
+class TokenChecks(World):
+    def test_a_classic_token_without_admin_org_reads_but_cannot_change(self):
+        self.github.scopes = "read:org, repo"
+
+        self.assertTrue(self.provider.read())
+
+        with self.assertRaisesRegex(
+            AccessError, "lacks the admin:org scope; reconnect GitHub"
+        ):
+            self.provider.apply(Op("add", Grant("github", "cy", "org", "member")))
+
+        self.assertEqual(self.github.writes(), [])
+
+    def test_a_token_without_read_org_cannot_read(self):
+        self.github.scopes = "repo"
+
+        with self.assertRaisesRegex(AccessError, "lacks the read:org scope"):
+            self.provider.read()
+
+    def test_the_check_runs_once(self):
+        self.provider.read()
+        self.provider.read()
+
+        self.assertEqual(
+            [c for c in self.github.calls if c[1] == "user"], [("GET", "user", None)]
+        )
+
+    def app_provider(self, permissions):
+        self.github.scopes = None
+        self.github.installations = [
+            {"id": 7, "account": {"login": "acme"}, "permissions": permissions}
+        ]
+
+        return GitHubProvider("acme", "t", http=self.github, app="ap-app")
+
+    def test_a_github_app_without_members_write_names_the_permission_and_the_links(
+        self,
+    ):
+        self.github.app_owner = {"login": "acme", "type": "Organization"}
+        provider = self.app_provider({"members": "read", "administration": "write"})
+
+        self.assertTrue(provider.read())
+
+        with self.assertRaises(AccessError) as raised:
+            provider.apply(Op("add", Grant("github", "cy", "org", "member")))
+
+        message = str(raised.exception)
+        self.assertIn('Organization → Members "Read and write" (is read)', message)
+        self.assertIn(
+            "https://github.com/organizations/acme/settings/apps/ap-app/permissions",
+            message,
+        )
+        self.assertIn(
+            "https://github.com/organizations/acme/settings/installations/7", message
+        )
+        self.assertNotIn("Administration", message)
+
+    def test_a_github_app_not_installed_on_the_org_says_where_to_install_it(self):
+        provider = self.app_provider({})
+        self.github.installations = []
+
+        with self.assertRaisesRegex(
+            AccessError, "not installed on acme.*apps/ap-app/installations/new"
+        ):
+            provider.read()
+
+    def test_a_github_app_with_the_permissions_reads(self):
+        provider = self.app_provider({"members": "write", "administration": "write"})
+
+        self.assertIn(Grant("github", "ana", "org", "admin"), provider.read())
+
+    def test_a_token_without_scopes_header_and_no_app_is_not_checked(self):
+        self.github.scopes = None
+
+        self.assertTrue(self.provider.read())
