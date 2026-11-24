@@ -53,7 +53,7 @@ On a hosted platform (core 0.34 or later) set only `org` under **Plugins → Git
 | a GitHub App (*Create GitHub App* on the platform) | Organization permission **Members: Read and write**, repository permission **Administration: Read and write**, the app installed on the organization | an app created after the plugin was installed carries them; for an older one, add them in the app's *Permissions & events* and accept the new permissions on the organization's installation |
 | an OAuth App | scopes `admin:org` and `repo` | *Connect GitHub* again: connecting asks for them |
 
-When something is missing, the audit names it, with the links to grant it — never a request for a token. The token option, when set, wins over the connection.
+When something is missing, the call names it, with the links to grant it — never a request for a token. Reading (`access_audit`, `access_who`) needs only the read side (`read:org` and `repo`; *Members: Read*, *Administration: Read*); a change needs the write side. The token option, when set, wins over the connection.
 
 ## Token permissions
 
