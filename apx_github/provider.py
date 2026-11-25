@@ -63,10 +63,10 @@ class GitHubProvider(AccessProvider):
 
         held = res.headers.get("x-oauth-scopes")
 
-        if held is not None:
-            self._scopes(held, write)
-        elif self.app:
+        if self.app and not (held or "").strip():
             self._installation(write)
+        elif held is not None:
+            self._scopes(held, write)
 
         self.checked.add(write)
 
