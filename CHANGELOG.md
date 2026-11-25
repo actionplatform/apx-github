@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1 — 2026-11-24
+
+### Bug Fixes
+- **access:** a GitHub App user token with an empty scopes header is checked by installation
+
+### Tests
+- **access:** an app user token answers an empty X-OAuth-Scopes
+
 ## v0.2.0 — 2026-11-24
 
 ### Features
