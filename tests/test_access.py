@@ -338,6 +338,12 @@ class TokenChecks(World):
 
         self.assertIn(Grant("github", "ana", "org", "admin"), provider.read())
 
+    def test_a_github_app_user_token_with_an_empty_scopes_header_reads(self):
+        provider = self.app_provider({"members": "write", "administration": "write"})
+        self.github.scopes = ""
+
+        self.assertIn(Grant("github", "ana", "org", "admin"), provider.read())
+
     def test_a_token_without_scopes_header_and_no_app_is_not_checked(self):
         self.github.scopes = None
 
